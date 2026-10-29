@@ -8,7 +8,7 @@ type Schemas = {
 };
 
 /** Builds a CRUD contract for an entity using plain types only. */
-export const repositoryContract = <TEntity>(pathPrefix: string, schema: Schemas, extra?: AppRouter) => {
+export const crudContract = <TEntity>(pathPrefix: string, schema: Schemas, extra?: AppRouter) => {
   const baseRoutes = {
     findOne: {
       method: 'GET',

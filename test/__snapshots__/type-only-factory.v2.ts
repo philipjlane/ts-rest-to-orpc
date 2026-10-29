@@ -15,7 +15,7 @@ type Schemas = {
 };
 
 /** Builds a CRUD contract for an entity using plain types only. */
-export const repositoryContract = <TEntity>(pathPrefix: string, schema: Schemas, extra?: AnyContractRouter) => {
+export const crudContract = <TEntity>(pathPrefix: string, schema: Schemas, extra?: AnyContractRouter) => {
   const baseRoutes = {
     findOne: oc
       .meta(openapi({ method: 'GET', path: '/{id}' }))
