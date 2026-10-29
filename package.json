@@ -54,12 +54,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/philiplane/ts-rest-to-orpc.git"
+    "url": "git+https://github.com/philipjlane/ts-rest-to-orpc.git"
   },
   "bugs": {
-    "url": "https://github.com/philiplane/ts-rest-to-orpc/issues"
+    "url": "https://github.com/philipjlane/ts-rest-to-orpc/issues"
   },
-  "homepage": "https://github.com/philiplane/ts-rest-to-orpc#readme",
+  "homepage": "https://github.com/philipjlane/ts-rest-to-orpc#readme",
   "author": "Philip Lane",
   "publishConfig": {
     "access": "public"
