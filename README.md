@@ -345,6 +345,9 @@ The package is ESM only. It also exports `transformSourceFile`, `createProject`,
 
 ## Development
 
+Building uses tsdown, which needs Node 22 or later; the published package itself runs on Node 20 and later.
+
+
 Requires Node 20 or later and [pnpm](https://pnpm.io).
 
 ```sh

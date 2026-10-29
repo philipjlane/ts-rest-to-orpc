@@ -6,7 +6,31 @@ on:
   pull_request:
 
 jobs:
-  test:
+  build:
+    name: Test and build (Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm typecheck:fixtures
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  smoke:
+    name: Run built CLI (Node ${{ matrix.node }})
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,10 +44,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm typecheck:fixtures
-      - run: pnpm build
-      - name: Smoke test the built CLI
-        run: node dist/cli.js test/fixtures/basic.ts --dry-run
+      - run: pnpm install --frozen-lockfile --prod
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - run: node dist/cli.js --version
+      - run: node dist/cli.js test/fixtures/basic.ts --dry-run
+      - run: node dist/cli.js test/fixtures/basic.ts --print --target v2 | grep -q "openapi("
