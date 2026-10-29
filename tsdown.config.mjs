@@ -1,3 +1,4 @@
+// Plain JavaScript so tsdown can load it on Node 20 without an extra config loader.
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
@@ -6,6 +7,6 @@ export default defineConfig({
   dts: true,
   clean: true,
   platform: 'node',
-  fixedExtension: false,
   target: 'node20',
+  fixedExtension: false,
 })
