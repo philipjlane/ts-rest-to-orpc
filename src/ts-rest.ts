@@ -34,23 +34,35 @@ export function isRouteLiteral(node: Node): node is ObjectLiteralExpression {
   return names.has('method') && names.has('path')
 }
 
-/** `c.<member>(...)` where `c` is a contract instance. Returns the member name. */
+/** Is this a bare `initContract()` / `initTsRest()` call? */
+export function isFactoryCall(ctx: TransformContext, node: Node): node is CallExpression {
+  if (!Node.isCallExpression(node)) return false
+  const callee = node.getExpression()
+  if (Node.isIdentifier(callee)) return ctx.factoryNames.has(callee.getText())
+  if (Node.isPropertyAccessExpression(callee)) return callee.getName() === 'initContract' || callee.getName() === 'initTsRest'
+  return false
+}
+
+/** `c.<member>(...)` where `c` is a contract instance (or `initContract().<member>(...)`). Returns the member name. */
 export function contractCallMember(ctx: TransformContext, node: Node): string | undefined {
   if (!Node.isCallExpression(node)) return undefined
   const callee = node.getExpression()
   if (!Node.isPropertyAccessExpression(callee)) return undefined
   const target = callee.getExpression()
-  if (!Node.isIdentifier(target) || !ctx.contractIdents.has(target.getText())) return undefined
-  return callee.getName()
+  if (Node.isIdentifier(target) && ctx.contractIdents.has(target.getText())) return callee.getName()
+  if (isFactoryCall(ctx, target)) return callee.getName()
+  return undefined
 }
 
 /** Unwrap `c.query({...})` / `c.mutation({...})` to the route literal, or return the node if it already is one. */
 export function unwrapRoute(ctx: TransformContext, node: Node): ObjectLiteralExpression | undefined {
-  if (isRouteLiteral(node)) return node
-  const member = contractCallMember(ctx, node)
+  const inner = Node.isExpression(node) ? unwrapExpression(node) : node
+  if (isRouteLiteral(inner)) return inner
+  const member = contractCallMember(ctx, inner)
   if (member === 'query' || member === 'mutation') {
-    const arg = (node as CallExpression).getArguments()[0]
-    if (arg && isRouteLiteral(arg)) return arg
+    const arg = (inner as CallExpression).getArguments()[0]
+    const unwrapped = arg && Node.isExpression(arg) ? unwrapExpression(arg) : arg
+    if (unwrapped && isRouteLiteral(unwrapped)) return unwrapped
   }
   return undefined
 }
@@ -80,8 +92,9 @@ export function isRouterLiteral(ctx: TransformContext, node: Node, depth = 0): n
   if (!Node.isObjectLiteralExpression(node) || depth > 5) return false
   for (const prop of node.getProperties()) {
     if (!Node.isPropertyAssignment(prop)) continue
-    const init = prop.getInitializer()
-    if (!init) continue
+    const raw = prop.getInitializer()
+    if (!raw) continue
+    const init = unwrapExpression(raw)
     if (unwrapRoute(ctx, init) || isRouterCall(ctx, init)) return true
     if (Node.isObjectLiteralExpression(init) && isRouterLiteral(ctx, init, depth + 1)) return true
   }
@@ -89,7 +102,8 @@ export function isRouterLiteral(ctx: TransformContext, node: Node, depth = 0): n
 }
 
 export function literalString(node: Node): string | undefined {
-  if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) return node.getLiteralText()
+  const inner = Node.isExpression(node) ? unwrapExpression(node) : node
+  if (Node.isStringLiteral(inner) || Node.isNoSubstitutionTemplateLiteral(inner)) return inner.getLiteralText()
   return undefined
 }
 

@@ -51,9 +51,11 @@ export interface InheritedOptions {
   commonSuccess: Map<number, SchemaValue>
   /** Router-level `metadata` expression text (v1 only). */
   metadata?: string
+  /** Path params declared in enclosing `pathPrefix` values, which oRPC requires in the input. */
+  prefixParams: string[]
 }
 
-export const EMPTY_INHERITED: InheritedOptions = { commonSuccess: new Map() }
+export const EMPTY_INHERITED: InheritedOptions = { commonSuccess: new Map(), prefixParams: [] }
 
 const TODO = '// TODO(ts-rest-to-orpc):'
 
@@ -97,11 +99,17 @@ function plainTypeText(ctx: TransformContext, call: CallExpression): string {
  */
 export function typeCall(ctx: TransformContext, typeArgs: string, scope: Node | undefined): string {
   ctx.contractImports.add('type')
+  if (ctx.isJs) return 'type()'
   return inGenericScope(scope) ? `type<${typeArgs}>((v) => v)` : `type<${typeArgs}>()`
 }
 
 function inGenericScope(node: Node | undefined): boolean {
   return node?.getAncestors().some((a) => Node.isTypeParametered(a) && a.getTypeParameters().length > 0) ?? false
+}
+
+/** One indentation level deeper, matching the file's tab or space style. */
+function step(ctx: TransformContext, indent: string): string {
+  return indent + ctx.indentUnit
 }
 
 function reindent(text: string, indent: string): string {
@@ -196,7 +204,7 @@ export function renderRoute(
     note('error', 'route-spread', 'Route object contains a spread or method; it was left unchanged.')
     return { text: route.getText(), notes }
   }
-  const inner = `${indent}  `
+  const inner = step(ctx, indent)
   const chain: string[] = []
   const config: Array<[string, string]> = []
 
@@ -208,14 +216,18 @@ export function renderRoute(
 
   const pathNode = props.get('path')!
   const pathLiteral = literalString(pathNode)
-  let pathParams: string[] = []
+  let pathParams: string[] = [...inherited.prefixParams]
+  const pathTemplate = unwrapExpression(pathNode)
   if (pathLiteral !== undefined) {
     const converted = convertPath(pathLiteral)
-    pathParams = converted.params
+    pathParams.push(...converted.params)
     config.push(['path', q(ctx, converted.path)])
-  } else if (Node.isTemplateExpression(pathNode)) {
-    const converted = convertPath(pathNode.getText())
-    pathParams = converted.params
+    if (converted.optionalParams.length > 0) {
+      note('warn', 'path-optional-param', `oRPC has no optional path params; ${converted.optionalParams.map((p) => `\`:${p}?\``).join(', ')} became required. Split the route or move the value to the query.`)
+    }
+  } else if (Node.isTemplateExpression(pathTemplate)) {
+    const converted = convertPath(pathTemplate.getText())
+    pathParams.push(...converted.params)
     config.push(['path', converted.path])
     note('warn', 'path-template', 'Path is a template literal; `:param` segments were rewritten to `{param}` textually. Check the result.')
   } else {
@@ -228,6 +240,9 @@ export function renderRoute(
   const paramsNode = props.get('pathParams')
   if (paramsNode) {
     parts.params = classify(ctx, paramsNode)
+    if (inherited.prefixParams.length > 0) {
+      note('warn', 'prefix-params', `The router pathPrefix declares ${inherited.prefixParams.map((p) => `\`${p}\``).join(', ')}; add them to this route's params schema, oRPC requires every path param in the input.`)
+    }
   } else if (pathParams.length > 0) {
     parts.params = {
       kind: 'schema',
@@ -262,6 +277,9 @@ export function renderRoute(
     }
   }
   if (inherited.baseHeaders) {
+    if (headers && headers.kind === 'plain') {
+      note('warn', 'headers-not-merged', `Route headers \`c.type<${headers.typeArgs}>()\` could not be merged with the router baseHeaders; only baseHeaders were kept.`)
+    }
     headers = headers?.text
       ? { kind: 'schema', generated: true, text: ctx.schema.merge(inherited.baseHeaders, headers.text) }
       : { kind: 'schema', generated: true, text: inherited.baseHeaders }
@@ -283,7 +301,7 @@ export function renderRoute(
   // (typical for contracts written with `c.type<T>()`), or when a synthesised
   // params schema would otherwise force a zod dependency on a file without one.
   const presentParts = Object.values(parts).filter((v): v is SchemaValue => v !== undefined)
-  const typeOnly = presentParts.length > 0 && presentParts.every((v) => v.kind === 'plain' || (v.typeText !== undefined && ctx.schema.kind === 'unknown'))
+  const typeOnly = !ctx.isJs && presentParts.length > 0 && presentParts.every((v) => v.kind === 'plain' || (v.typeText !== undefined && ctx.schema.kind === 'unknown'))
     || (presentParts.length > 0 && presentParts.every(isTypeOnly) && presentParts.some((v) => v.kind === 'plain'))
   const tc = (typeArgs: string): string => typeCall(ctx, typeArgs, route)
 
@@ -305,7 +323,8 @@ export function renderRoute(
         const bText = nested(ctx, b, notes, line)
         input = aText && bText ? ctx.schema.merge(aText, bText) : (aText ?? bText)
       }
-      note('info', 'input-merged', 'Path params and query/body schemas were merged into one compact input.')
+      if (typeOnly) note('info', 'input-merged', 'Path params and query/body types were merged into one compact input.')
+      else note('warn', 'input-merged', `Path params and ${mergeable[1]} schemas were merged with \`${ctx.schema.kind === 'valibot' ? '.entries' : '.extend(...shape)'}\`; both must be plain object schemas.`)
     }
   } else {
     const entries: Array<[string, string]> = []
@@ -389,7 +408,7 @@ export function renderRoute(
         const entries: Array<[string, string]> = [['status', ctx.schema.literal(String(status))]]
         const body = nested(ctx, value, notes, line)
         if (body) entries.push(['body', body])
-        return ctx.schema.object(entries, `${inner}  `)
+        return ctx.schema.object(entries, step(ctx, inner))
       })
       output = ctx.schema.union(members, inner)
       if (ctx.schema.kind === 'unknown') schemaLibWarning(ctx)
@@ -430,7 +449,7 @@ export function renderRoute(
       }
       const data = standalone(ctx, value, route)
       if (data) fields.push(['data', data])
-      return [code, fields.length > 0 ? renderConfig(fields, `${inner}  `) : '{}']
+      return [code, fields.length > 0 ? renderConfig(fields, step(ctx, inner)) : '{}']
     })
     chain.push(`.errors(${renderConfig(entries, inner)})`)
   }
@@ -480,14 +499,15 @@ export function renderRouterObject(
   inherited: InheritedOptions,
   indent: string,
 ): string {
-  const inner = `${indent}  `
+  const inner = step(ctx, indent)
   const lines: string[] = []
   for (const prop of obj.getProperties()) {
     const comments = leadingComments(prop, inner)
     if (Node.isPropertyAssignment(prop)) {
-      const init = prop.getInitializer()
+      const raw = prop.getInitializer()
       const name = prop.getNameNode().getText()
-      if (!init) continue
+      if (!raw) continue
+      const init = unwrapExpression(raw)
       const route = unwrapRoute(ctx, init)
       if (route) {
         const rendered = renderRoute(ctx, route, inherited, inner)
@@ -536,10 +556,10 @@ export function renderRouterCall(
   indent: string,
 ): string {
   const line = call.getStartLineNumber()
-  const [routesArg, optionsArg] = call.getArguments()
+  const [routesArg, optionsArg] = call.getArguments().map((a) => (Node.isExpression(a) ? unwrapExpression(a) : a))
   const builders: string[] = []
-  const next: InheritedOptions = { ...inherited, commonSuccess: new Map(inherited.commonSuccess) }
-  const inner = `${indent}  `
+  const next: InheritedOptions = { ...inherited, commonSuccess: new Map(inherited.commonSuccess), prefixParams: [...inherited.prefixParams] }
+  const inner = step(ctx, indent)
 
   if (optionsArg) {
     const options = Node.isObjectLiteralExpression(optionsArg) ? propertyMap(optionsArg) : null
@@ -579,19 +599,30 @@ export function renderRouterCall(
             else if (!standard) report(ctx, 'warn', 'error-status-custom', `Status ${status} has no built-in oRPC error code; \`${code}\` was generated.`, line)
             const data = standalone(ctx, value, call)
             if (data) fields.push(['data', data])
-            errorEntries.push([code, fields.length > 0 ? renderConfig(fields, `${inner}  `) : '{}'])
+            errorEntries.push([code, fields.length > 0 ? renderConfig(fields, step(ctx, inner)) : '{}'])
           }
           if (errorEntries.length > 0) builders.push(`.errors(${renderConfig(errorEntries, inner)})`)
         } else {
           report(ctx, 'error', 'common-responses-not-literal', 'commonResponses is not an inline object literal and was dropped.', line)
         }
       }
-      const prefix = options.get('pathPrefix')
+      const prefixRaw = options.get('pathPrefix')
+      const prefix = prefixRaw && !(Node.isIdentifier(prefixRaw) && prefixRaw.getText() === 'undefined') ? unwrapExpression(prefixRaw) : undefined
       if (prefix) {
         const literal = literalString(prefix)
-        let text = literal !== undefined ? q(ctx, literal) : exprText(ctx, prefix)
-        if (literal === undefined && !Node.isTemplateExpression(prefix)) {
-          text = `${text} as \`/\${string}\``
+        let text: string
+        if (literal !== undefined) {
+          const converted = convertPath(literal)
+          next.prefixParams.push(...converted.params)
+          text = q(ctx, converted.path)
+        } else if (Node.isTemplateExpression(prefix)) {
+          const converted = convertPath(prefix.getText())
+          next.prefixParams.push(...converted.params)
+          text = converted.path
+        } else {
+          const expr = exprText(ctx, prefix)
+          const simple = Node.isIdentifier(prefix) || Node.isPropertyAccessExpression(prefix) || Node.isCallExpression(prefix)
+          text = `${simple ? expr : `(${expr})`} as \`/\${string}\``
           report(ctx, 'info', 'prefix-cast', 'pathPrefix is not a literal, so it was cast to oRPC\'s `/${string}` path type.', line)
         }
         if (ctx.options.target === 'v1') builders.push(`.prefix(${text})`)

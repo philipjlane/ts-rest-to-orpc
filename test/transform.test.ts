@@ -53,15 +53,57 @@ describe('transform basics', () => {
   })
 })
 
+describe('file styles', () => {
+  const source = [
+    "import { initContract } from '@ts-rest/core'",
+    "import { z } from 'zod'",
+    'const c = initContract()',
+    'export const r = c.router({',
+    "\tping: { method: 'GET', path: '/ping', responses: { 200: z.string() } },",
+    '})',
+    '',
+  ].join('\r\n')
+
+  it('keeps CRLF line endings and tab indentation', () => {
+    const result = transform(source)
+    expect(result.code).not.toMatch(/[^\r]\n/)
+    expect(result.code).toContain('\r\n\t\t.route(')
+  })
+
+  it('emits type() without generics for JavaScript files', () => {
+    const js = source.replace(/\r\n/g, '\n').replace("responses: { 200: z.string() }", 'responses: { 204: c.noBody() }')
+    const result = transform(js, {}, 'contract.js')
+    expect(result.code).toContain('.output(type())')
+    expect(result.code).not.toContain('type<')
+  })
+
+  it('wraps an object router in parentheses when it is an arrow body', () => {
+    const arrow = "import { initContract } from '@ts-rest/core'\nconst c = initContract()\nexport const make = () => c.router({ a: { method: 'GET', path: '/a', responses: { 204: c.noBody() } } })\n"
+    const result = transform(arrow)
+    expect(result.code).toContain('() => ({')
+  })
+
+  it('keeps an exported contract instance and its import', () => {
+    const result = transform("import { initContract } from '@ts-rest/core'\nexport const c = initContract()\n")
+    expect(result.code).toContain("import { initContract } from '@ts-rest/core'")
+    expect(result.code).toContain('export const c = initContract()')
+    expect(result.diagnostics.map((d) => d.code)).toContain('contract-instance-exported')
+  })
+})
+
 describe('convertPath', () => {
   it('rewrites params', () => {
     expect(convertPath('/posts/:postId/comments/:commentId')).toEqual({
       path: '/posts/{postId}/comments/{commentId}',
       params: ['postId', 'commentId'],
+      optionalParams: [],
     })
   })
   it('leaves plain paths alone', () => {
-    expect(convertPath('/posts')).toEqual({ path: '/posts', params: [] })
+    expect(convertPath('/posts')).toEqual({ path: '/posts', params: [], optionalParams: [] })
+  })
+  it('flags optional params', () => {
+    expect(convertPath('/posts/:id?')).toEqual({ path: '/posts/{id}', params: ['id'], optionalParams: ['id'] })
   })
 })
 

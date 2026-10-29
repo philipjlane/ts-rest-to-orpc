@@ -1,6 +1,6 @@
 // Diagnostics:
 // info L12 [wrapper-stripped] Removed `as const` / `satisfies` wrapper from `baseRoutes`; oRPC builders carry their own types.
-// info L30 [input-merged] Path params and query/body schemas were merged into one compact input.
+// info L30 [input-merged] Path params and query/body types were merged into one compact input.
 // info L41 [multiple-success] Multiple success statuses were converted to a detailed output union.
 // info L49 [prefix-cast] pathPrefix is not a literal, so it was cast to oRPC's `/${string}` path type.
 // info L49 [strict-status-codes] Dropped router-level `strictStatusCodes`.

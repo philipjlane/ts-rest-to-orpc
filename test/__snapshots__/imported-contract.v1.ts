@@ -1,10 +1,9 @@
 // Diagnostics:
 // warn L1 [ts-rest-import-remaining] Still importing `ClientInferResponseBody` from @ts-rest/core; migrate these by hand.
 
-import { oc } from '@orpc/contract'
 import type { ClientInferResponseBody } from '@ts-rest/core'
-import { c } from './contract-instance'
 import { z } from 'zod'
+import { oc } from '@orpc/contract'
 
 export const health = {
   check: oc
@@ -13,3 +12,11 @@ export const health = {
 }
 
 export type HealthBody = ClientInferResponseBody<typeof health.check, 200>
+
+import { usersContract } from './users'
+export const api = oc
+  .prefix('/api')
+  .router({
+    users: usersContract,
+    health,
+  })

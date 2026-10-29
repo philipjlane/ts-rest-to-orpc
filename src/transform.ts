@@ -1,12 +1,23 @@
-import { Node, Project, QuoteKind, ScriptKind, SyntaxKind, type CallExpression, type SourceFile, type VariableDeclaration } from 'ts-morph'
-import { detectQuote, report, type TransformContext } from './context.js'
+import {
+  Node,
+  Project,
+  QuoteKind,
+  ScriptKind,
+  SyntaxKind,
+  type CallExpression,
+  type ImportDeclaration,
+  type SourceFile,
+  type VariableDeclaration,
+} from 'ts-morph'
+import { detectIndentUnit, detectQuote, report, type TransformContext } from './context.js'
 import { EMPTY_INHERITED, renderRoute, renderRouterCall, renderRouterObject, typeCall } from './render.js'
 import { detectSchemaLib } from './schema-lib.js'
-import { contractCallMember, isRouterCall, isRouterLiteral, unwrapExpression, unwrapRoute } from './ts-rest.js'
+import { contractCallMember, isFactoryCall, isRouterCall, isRouterLiteral, unwrapExpression, unwrapRoute } from './ts-rest.js'
 import { resolveOptions, type Diagnostic, type TransformOptions, type TransformResult } from './types.js'
 
 const TS_REST_MODULES = new Set(['@ts-rest/core'])
 const CONTRACT_FACTORIES = new Set(['initContract', 'initTsRest'])
+const ROUTER_OPTION_KEYS = new Set(['pathPrefix', 'baseHeaders', 'strictStatusCodes', 'commonResponses', 'metadata', 'validateResponseOnClient'])
 const TYPE_RENAMES: Record<string, string> = {
   AppRouter: 'AnyContractRouter',
   AppRoute: 'AnyContractProcedure',
@@ -36,17 +47,22 @@ export function transform(code: string, options: TransformOptions = {}, filePath
 function scriptKindFor(filePath: string): ScriptKind {
   if (filePath.endsWith('.tsx')) return ScriptKind.TSX
   if (filePath.endsWith('.jsx')) return ScriptKind.JSX
-  if (filePath.endsWith('.js') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs')) return ScriptKind.JS
+  if (isJsPath(filePath)) return ScriptKind.JS
   return ScriptKind.TS
+}
+
+function isJsPath(filePath: string): boolean {
+  return /\.(js|mjs|cjs|jsx)$/.test(filePath)
 }
 
 export function transformSourceFile(file: SourceFile, rawOptions: TransformOptions = {}): TransformResult {
   const original = file.getFullText()
   const options = resolveOptions(rawOptions)
-  const contractIdents = findContractIdents(file)
   const tsRestImports = file.getImportDeclarations().filter((d) => TS_REST_MODULES.has(d.getModuleSpecifierValue()))
+  const factoryNames = findFactoryNames(tsRestImports)
+  const contractIdents = findContractIdents(file, factoryNames)
 
-  if (contractIdents.size === 0 && tsRestImports.length === 0) {
+  if (contractIdents.size === 0 && tsRestImports.length === 0 && factoryNames.size === 0) {
     return { code: original, changed: false, diagnostics: [] }
   }
 
@@ -55,7 +71,10 @@ export function transformSourceFile(file: SourceFile, rawOptions: TransformOptio
     options,
     schema: detectSchemaLib(file, options.schema),
     contractIdents,
+    factoryNames,
+    isJs: isJsPath(file.getFilePath()),
     quote: detectQuote(file),
+    indentUnit: detectIndentUnit(file),
     diagnostics: [],
     contractImports: new Set(),
     contractTypeImports: new Set(),
@@ -72,7 +91,8 @@ export function transformSourceFile(file: SourceFile, rawOptions: TransformOptio
   file.getProject().manipulationSettings.set({ quoteKind: ctx.quote === '"' ? QuoteKind.Double : QuoteKind.Single })
   rewriteImports(ctx)
 
-  const code = file.getFullText()
+  let code = file.getFullText()
+  if (original.includes('\r\n')) code = code.replace(/\r?\n/g, '\r\n')
   return { code, changed: code !== original, diagnostics: sortDiagnostics(ctx.diagnostics) }
 }
 
@@ -84,27 +104,55 @@ function sortDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
 // Discovery
 // ---------------------------------------------------------------------------
 
-function findContractIdents(file: SourceFile): Set<string> {
-  const idents = new Set<string>()
-  for (const decl of file.getVariableDeclarations()) {
-    const init = decl.getInitializer()
-    if (!init || !Node.isCallExpression(init)) continue
-    const callee = init.getExpression()
-    const name = Node.isIdentifier(callee) ? callee.getText() : Node.isPropertyAccessExpression(callee) ? callee.getName() : ''
-    if (CONTRACT_FACTORIES.has(name)) idents.add(decl.getName())
+/** Local names under which `initContract` / `initTsRest` are imported. */
+function findFactoryNames(tsRestImports: ImportDeclaration[]): Set<string> {
+  const names = new Set<string>()
+  for (const decl of tsRestImports) {
+    for (const spec of decl.getNamedImports()) {
+      if (CONTRACT_FACTORIES.has(spec.getName())) names.add((spec.getAliasNode() ?? spec.getNameNode()).getText())
+    }
   }
-  if (idents.size > 0) return idents
+  return names
+}
 
-  // The contract instance may be imported from another file: look for `x.router({ ...routes })`.
+function factoryCallee(node: Node, factoryNames: Set<string>): string | undefined {
+  if (!Node.isCallExpression(node)) return undefined
+  const callee = node.getExpression()
+  if (Node.isIdentifier(callee)) return factoryNames.has(callee.getText()) ? callee.getText() : undefined
+  if (Node.isPropertyAccessExpression(callee) && CONTRACT_FACTORIES.has(callee.getName())) return callee.getName()
+  return undefined
+}
+
+function findContractIdents(file: SourceFile, factoryNames: Set<string>): Set<string> {
+  const idents = new Set<string>()
+  for (const decl of file.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    const init = decl.getInitializer()
+    if (!init || factoryCallee(init, factoryNames) === undefined) continue
+    if (Node.isIdentifier(decl.getNameNode())) idents.add(decl.getName())
+  }
+
+  // The contract instance may be imported from another file: accept `x.router(...)`
+  // when `x` is an imported identifier and the call looks like a ts-rest router.
+  const imported = new Set<string>()
+  for (const decl of file.getImportDeclarations()) {
+    if (TS_REST_MODULES.has(decl.getModuleSpecifierValue())) continue
+    for (const spec of decl.getNamedImports()) imported.add((spec.getAliasNode() ?? spec.getNameNode()).getText())
+    const def = decl.getDefaultImport()
+    if (def) imported.add(def.getText())
+  }
   file.forEachDescendant((node) => {
     if (!Node.isCallExpression(node)) return
     const callee = node.getExpression()
     if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'router') return
     const target = callee.getExpression()
-    const arg = node.getArguments()[0]
-    if (!Node.isIdentifier(target) || !arg || !Node.isObjectLiteralExpression(arg)) return
-    const probe: TransformContext = { contractIdents: new Set([target.getText()]) } as TransformContext
-    if (isRouterLiteral(probe, arg)) idents.add(target.getText())
+    if (!Node.isIdentifier(target) || !imported.has(target.getText()) || idents.has(target.getText())) return
+    const [routes, options] = node.getArguments().map((a) => (Node.isExpression(a) ? unwrapExpression(a) : a))
+    const probe = { contractIdents: new Set([target.getText()]), factoryNames: new Set<string>() } as TransformContext
+    const routesObj = routes !== undefined && Node.isObjectLiteralExpression(routes) ? routes : undefined
+    const routesLookRight = routesObj !== undefined
+      && (isRouterLiteral(probe, routesObj as Node) || routesObj.getProperties().every((p: Node) => Node.isShorthandPropertyAssignment(p) || Node.isSpreadAssignment(p)))
+    const optionsLookRight = options !== undefined && Node.isObjectLiteralExpression(options) && options.getProperties().every((p) => Node.isPropertyNamed(p) && ROUTER_OPTION_KEYS.has(p.getName()))
+    if (routesLookRight || optionsLookRight) idents.add(target.getText())
   })
   return idents
 }
@@ -119,6 +167,13 @@ function insideRouterCall(ctx: TransformContext, node: Node): boolean {
   return node.getAncestors().some((a) => isRouterCall(ctx, a))
 }
 
+/** An object literal in these positions would parse as a block, so it needs parentheses. */
+function needsParens(call: CallExpression, rendered: string): boolean {
+  if (!rendered.startsWith('{')) return false
+  const parent = call.getParent()
+  return (Node.isArrowFunction(parent) && parent.getBody() === call) || Node.isExpressionStatement(parent)
+}
+
 function collectEdits(ctx: TransformContext): Edit[] {
   const edits: Edit[] = []
   const { file } = ctx
@@ -127,7 +182,8 @@ function collectEdits(ctx: TransformContext): Edit[] {
   file.forEachDescendant((node) => {
     if (!isRouterCall(ctx, node) || insideRouterCall(ctx, node)) return
     const call = node as CallExpression
-    const text = renderRouterCall(ctx, call, EMPTY_INHERITED, indentOf(call))
+    let text = renderRouterCall(ctx, call, EMPTY_INHERITED, indentOf(call))
+    if (needsParens(call, text)) text = `(${text})`
     edits.push({ start: call.getStart(), end: call.getEnd(), text })
   })
 
@@ -166,15 +222,23 @@ function collectEdits(ctx: TransformContext): Edit[] {
       const typeArgs = call.getTypeArguments().map((t) => t.getText()).join(', ') || 'unknown'
       edits.push({ start: call.getStart(), end: call.getEnd(), text: typeCall(ctx, typeArgs, call) })
     } else if (member === 'router') {
-      // Already handled above.
+      report(ctx, 'error', 'router-not-converted', 'This `.router()` call could not be converted (its routes are not an object literal or identifier in a supported position).', line)
     } else if (member === 'query' || member === 'mutation') {
-      // Handled in step 2 when bound to a variable; anything else is reported below.
       if (!Node.isVariableDeclaration(call.getParent())) {
         report(ctx, 'warn', 'route-not-converted', `\`c.${member}()\` used outside a router or variable declaration was left unchanged.`, line)
       }
     } else {
       report(ctx, 'warn', 'helper-not-converted', `\`c.${member}()\` used outside a route was left unchanged; oRPC has no direct equivalent.`, line)
     }
+  })
+
+  // 4. Factory calls that were neither bound to an identifier nor chained into a router.
+  file.forEachDescendant((node) => {
+    if (!isFactoryCall(ctx, node) || alreadyConverted(node)) return
+    const parent = node.getParent()
+    if (Node.isVariableDeclaration(parent) && Node.isIdentifier(parent.getNameNode())) return
+    if (Node.isPropertyAccessExpression(parent) && parent.getExpression() === node) return
+    report(ctx, 'warn', 'contract-not-converted', 'This `initContract()` call is used in a way the codemod does not understand (for example destructured), so nothing that depends on it was converted.', node.getStartLineNumber())
   })
 
   return dedupe(edits)
@@ -212,61 +276,98 @@ function applyEdits(file: SourceFile, edits: Edit[]): void {
 // Imports
 // ---------------------------------------------------------------------------
 
+function hasOtherReferences(node: Node): boolean {
+  if (!Node.isReferenceFindable(node)) return false
+  return node.findReferencesAsNodes().some((r) => r !== node)
+}
+
 function rewriteImports(ctx: TransformContext): void {
   const { file } = ctx
-  let insertIndex = 0
-  const remainingTsRest: string[] = []
 
+  // Drop `const c = initContract()` once nothing references it (never an exported one).
+  const removals: Node[] = []
+  for (const decl of file.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    if (!ctx.contractIdents.has(decl.getName())) continue
+    const init = decl.getInitializer()
+    const callee = init ? factoryCallee(init, ctx.factoryNames) : undefined
+    if (!init || callee === undefined) continue
+    const statement = decl.getVariableStatement()
+    if (statement?.isExported()) {
+      report(ctx, 'warn', 'contract-instance-exported', `\`${decl.getName()}\` is exported, so \`${callee}()\` was kept; remove it once no other file imports it.`, decl.getStartLineNumber())
+      continue
+    }
+    if (hasOtherReferences(decl.getNameNode())) {
+      report(ctx, 'warn', 'contract-instance-still-used', `\`${decl.getName()}\` is still referenced after conversion, so \`${callee}()\` was kept.`, decl.getStartLineNumber())
+      continue
+    }
+    if (statement && statement.getDeclarations().length === 1) removals.push(statement)
+    else decl.remove()
+  }
+  removeStatementsKeepingBlankLines(file, removals)
+
+  // Imported contract instances (`import { c } from './c'`) that are no longer used.
+  for (const decl of file.getImportDeclarations()) {
+    if (TS_REST_MODULES.has(decl.getModuleSpecifierValue())) continue
+    for (const spec of decl.getNamedImports()) {
+      const local = spec.getAliasNode() ?? spec.getNameNode()
+      if (ctx.contractIdents.has(local.getText()) && !hasOtherReferences(local)) spec.remove()
+    }
+    const def = decl.getDefaultImport()
+    if (def && ctx.contractIdents.has(def.getText()) && !hasOtherReferences(def)) decl.removeDefaultImport()
+    if (decl.getNamedImports().length === 0 && !decl.getDefaultImport() && !decl.getNamespaceImport() && !decl.getText().includes('{}')) {
+      // Only remove declarations we emptied ourselves (a side-effect import has no `{}` either, but it never had specifiers).
+      if (decl.getImportClause() === undefined) continue
+      decl.remove()
+    }
+  }
+
+  // `@ts-rest/core` imports: strip what was converted, rename what has a direct equivalent.
+  let replaced: ImportDeclaration | undefined
+  // New imports go after the leading block of imports, not after a stray import further down.
+  let lastImportIndex = -1
+  for (const statement of file.getStatements()) {
+    if (!Node.isImportDeclaration(statement)) break
+    lastImportIndex = statement.getChildIndex()
+  }
   for (const decl of file.getImportDeclarations()) {
     if (!TS_REST_MODULES.has(decl.getModuleSpecifierValue())) continue
-    insertIndex = decl.getChildIndex()
+    const remaining: string[] = []
     for (const spec of decl.getNamedImports()) {
       const name = spec.getName()
+      const local = spec.getAliasNode() ?? spec.getNameNode()
       if (CONTRACT_FACTORIES.has(name)) {
-        spec.remove()
+        if (hasOtherReferences(local)) remaining.push(name)
+        else spec.remove()
         continue
       }
       const renamed = TYPE_RENAMES[name]
-      const nameNode = spec.getNameNode()
-      if (renamed && !spec.getAliasNode() && Node.isIdentifier(nameNode)) {
-        const stillUsed = nameNode.findReferencesAsNodes().some((r) => r !== nameNode)
-        if (stillUsed) {
-          nameNode.rename(renamed)
+      if (renamed && !spec.getAliasNode() && Node.isIdentifier(local)) {
+        if (hasOtherReferences(local)) {
+          local.rename(renamed)
           ctx.contractTypeImports.add(renamed)
         }
         spec.remove()
         continue
       }
-      remainingTsRest.push(name)
+      remaining.push(name)
     }
-    if (decl.getNamedImports().length === 0 && !decl.getDefaultImport() && !decl.getNamespaceImport()) {
-      decl.remove()
-    } else if (remainingTsRest.length > 0) {
-      report(ctx, 'warn', 'ts-rest-import-remaining', `Still importing ${remainingTsRest.map((n) => `\`${n}\``).join(', ')} from @ts-rest/core; migrate these by hand.`, decl.getStartLineNumber())
-    }
-  }
-
-  // Drop `const c = initContract()` once nothing references it.
-  const removals: Node[] = []
-  for (const decl of file.getVariableDeclarations()) {
-    if (!ctx.contractIdents.has(decl.getName())) continue
-    const init = decl.getInitializer()
-    if (!init || !Node.isCallExpression(init)) continue
-    const callee = init.getExpression()
-    const name = Node.isIdentifier(callee) ? callee.getText() : Node.isPropertyAccessExpression(callee) ? callee.getName() : ''
-    if (!CONTRACT_FACTORIES.has(name)) continue
-    const references = decl.findReferencesAsNodes().filter((r) => r !== decl.getNameNode())
-    if (references.length === 0) {
-      const statement = decl.getVariableStatement()
-      if (statement && statement.getDeclarations().length === 1) removals.push(statement)
-      else decl.remove()
-    } else {
-      report(ctx, 'warn', 'contract-instance-still-used', `\`${decl.getName()}\` is still referenced after conversion, so \`${name}()\` was kept.`, decl.getStartLineNumber())
+    if (remaining.length > 0) {
+      report(ctx, 'warn', 'ts-rest-import-remaining', `Still importing ${remaining.map((n) => `\`${n}\``).join(', ')} from @ts-rest/core; migrate these by hand.`, decl.getStartLineNumber())
+    } else if (!decl.getDefaultImport() && !decl.getNamespaceImport()) {
+      // Reuse the declaration (and its leading comments) for the first new import.
+      if (!replaced && ctx.contractImports.size > 0) {
+        decl.setModuleSpecifier('@orpc/contract')
+        decl.addNamedImports([...ctx.contractImports].sort())
+        decl.setIsTypeOnly(false)
+        replaced = decl
+        ctx.contractImports.clear()
+      } else {
+        decl.remove()
+      }
     }
   }
 
-  removeStatementsKeepingBlankLines(file, removals)
-
+  let insertIndex = replaced ? replaced.getChildIndex() + 1 : lastImportIndex + 1
   if (ctx.contractImports.size > 0) {
     if (addNamedImports(ctx, '@orpc/contract', [...ctx.contractImports].sort(), insertIndex)) insertIndex++
   }
@@ -302,10 +403,13 @@ function removeStatementsKeepingBlankLines(file: SourceFile, statements: Node[])
     if (text[stop] === '\n') stop++
     const hadBlankBefore = /\n[ \t]*\n/.test(text.slice(start, bodyStart))
     const hadBlankAfter = /^[ \t]*\r?\n/.test(text.slice(stop))
-    let before = text.slice(0, start).replace(/[ \t]*\r?\n?$/, '')
-    let after = text.slice(stop).replace(/^[ \t]*\r?\n/, '')
+    // Keep comments that sit in the removed statement's leading trivia.
+    const leading = text.slice(start, bodyStart)
+    const comments = leading.replace(/^\s+/, '').replace(/\s+$/, '')
+    const before = text.slice(0, start).replace(/[ \t]*\r?\n?$/, '')
+    const after = text.slice(stop).replace(/^[ \t]*\r?\n/, '')
     const separator = before.length === 0 ? '' : hadBlankBefore || hadBlankAfter ? '\n\n' : '\n'
-    text = before + separator + after
+    text = before + separator + (comments ? `${comments}\n` : '') + after
   }
   file.replaceWithText(text)
 }
@@ -320,13 +424,13 @@ function usesSemicolons(file: SourceFile): boolean {
 /** Returns true when a new import declaration was inserted. */
 function addNamedImports(ctx: TransformContext, moduleSpecifier: string, names: string[], index: number, typeOnly = false): boolean {
   const { file } = ctx
-  const existing = file.getImportDeclaration((d) => d.getModuleSpecifierValue() === moduleSpecifier && d.isTypeOnly() === typeOnly)
+  const existing = file.getImportDeclaration((d) => d.getModuleSpecifierValue() === moduleSpecifier && d.isTypeOnly() === typeOnly && !d.getNamespaceImport())
   if (existing) {
     const present = new Set(existing.getNamedImports().map((s) => s.getName()))
     existing.addNamedImports(names.filter((n) => !present.has(n)))
     return false
   }
-  const safeIndex = Math.min(index, file.getStatements().length)
+  const safeIndex = Math.max(0, Math.min(index, file.getStatements().length))
   const decl = file.insertImportDeclaration(safeIndex, { moduleSpecifier, namedImports: names, isTypeOnly: typeOnly })
   if (!usesSemicolons(file)) decl.replaceWithText(decl.getText().replace(/;$/, ''))
   return true

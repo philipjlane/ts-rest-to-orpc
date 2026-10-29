@@ -8,8 +8,14 @@ export interface TransformContext {
   schema: SchemaLib
   /** Identifiers bound to `initContract()` (usually `c`). */
   contractIdents: Set<string>
+  /** Local names of `initContract` / `initTsRest` imports, for chained `initContract().router(...)`. */
+  factoryNames: Set<string>
+  /** True for JavaScript files, where generics cannot be emitted. */
+  isJs: boolean
   /** Quote character used for generated string literals. */
   quote: string
+  /** One indentation level, as the file writes it (tab or spaces). */
+  indentUnit: string
   diagnostics: Diagnostic[]
   /** Named value imports needed from `@orpc/contract`. */
   contractImports: Set<string>
@@ -36,6 +42,17 @@ export function report(
   const diagnostic: Diagnostic = { level, code, message, line }
   ctx.diagnostics.push(diagnostic)
   return diagnostic
+}
+
+/** Detect the file's indentation unit: a tab, or the smallest indent width used. */
+export function detectIndentUnit(file: SourceFile): string {
+  let smallest = Number.POSITIVE_INFINITY
+  for (const line of file.getFullText().split('\n')) {
+    if (line.startsWith('\t')) return '\t'
+    const spaces = /^( +)\S/.exec(line)?.[1]?.length
+    if (spaces && spaces < smallest && !line.trimStart().startsWith('*')) smallest = spaces
+  }
+  return ' '.repeat(smallest === 4 || smallest === 8 ? 4 : 2)
 }
 
 /** Pick the quote style the file already uses most. */

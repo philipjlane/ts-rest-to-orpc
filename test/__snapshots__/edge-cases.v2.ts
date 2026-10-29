@@ -1,5 +1,6 @@
 // Diagnostics:
-// warn L3 [contract-instance-still-used] `c` is still referenced after conversion, so `initContract()` was kept.
+// warn L1 [ts-rest-import-remaining] Still importing `initContract` from @ts-rest/core; migrate these by hand.
+// warn L4 [contract-instance-still-used] `c` is still referenced after conversion, so `initContract()` was kept.
 // warn L7 [helper-not-converted] `c.responses()` used outside a route was left unchanged; oRPC has no direct equivalent.
 // warn L11 [error-status-custom] Status 418 has no built-in oRPC error code; `HTTP_418` was generated. Map it with `errorStatusMap` on your OpenAPI handler.
 // warn L16 [other-response] Response 200 used `c.otherResponse` with contentType 'application/pdf'; oRPC derives the content type from the schema, so set it via the OpenAPI spec if it matters.
@@ -9,9 +10,10 @@
 // error L39 [responses-not-literal] Responses are not an inline object literal, so they could not be split into `.output()` and `.errors()`.
 // warn L44 [unknown-route-key] Unknown route property `somethingNew` was dropped.
 
+import { initContract } from '@ts-rest/core'
+import { z } from 'zod'
 import { oc, type } from '@orpc/contract'
 import { openapi } from '@orpc/openapi'
-import { z } from 'zod'
 
 const c = initContract()
 

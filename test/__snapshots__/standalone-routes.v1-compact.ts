@@ -1,6 +1,6 @@
 // Diagnostics:
 // info L8 [wrapper-stripped] Removed `as const` / `satisfies` wrapper from `getUser`; oRPC builders carry their own types.
-// info L21 [input-merged] Path params and query/body schemas were merged into one compact input.
+// warn L21 [input-merged] Path params and body schemas were merged with `.extend(...shape)`; both must be plain object schemas.
 // info L29 [wrapper-stripped] Removed `as const` / `satisfies` wrapper from `userRoutes`; oRPC builders carry their own types.
 
 import { oc } from '@orpc/contract'
@@ -22,6 +22,7 @@ export const listUsers = oc
   .input(z.object({ q: z.string().optional() }))
   .output(z.array(User))
 
+// TODO(ts-rest-to-orpc): Path params and body schemas were merged with `.extend(...shape)`; both must be plain object schemas.
 export const updateUser = oc
   .route({ method: 'PATCH', path: '/users/{id}' })
   .input(z.object({ id: z.coerce.number() }).extend(User.partial().shape))

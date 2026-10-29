@@ -11,3 +11,6 @@ export const health = c.router({
 })
 
 export type HealthBody = ClientInferResponseBody<typeof health.check, 200>
+
+import { usersContract } from './users'
+export const api = c.router({ users: usersContract, health }, { pathPrefix: '/api' })

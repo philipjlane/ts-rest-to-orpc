@@ -1,11 +1,12 @@
 // Diagnostics:
-// info L7 [input-merged] Path params and query/body schemas were merged into one compact input.
+// warn L7 [input-merged] Path params and query schemas were merged with `.entries`; both must be plain object schemas.
 // info L16 [multiple-success] Multiple success statuses were converted to a detailed output union.
 
 import { oc } from '@orpc/contract'
 import * as v from 'valibot'
 
 export const contract = {
+  // TODO(ts-rest-to-orpc): Path params and query schemas were merged with `.entries`; both must be plain object schemas.
   getItem: oc
     .errors({ NOT_FOUND: { status: 404, data: v.object({ message: v.string() }) } })
     .route({ method: 'GET', path: '/items/{id}' })
