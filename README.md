@@ -241,6 +241,8 @@ oRPC procedures take one input. ts-rest keeps path params, query, headers and bo
 
 Pick `v1` unless you are already on the v2 beta. The same ts-rest input converts cleanly to either.
 
+The `v2` output was verified against `@orpc/contract` and `@orpc/openapi` 2.0.0-beta.47. oRPC 2.0 is still in beta, so its API may move before the final release. If you convert to `v2`, compile the result against the version you install, and please open an issue if something no longer typechecks.
+
 ## Diagnostics
 
 Each finding has a level, a code, a message and a 1-based line in the original source.
