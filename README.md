@@ -362,6 +362,18 @@ Fixtures live in `test/fixtures` and their expected outputs, for each target and
 
 `pnpm typecheck:fixtures` regenerates the converted fixtures into `typecheck/v1/generated` and `typecheck/v2/generated`, then runs `tsc` in each workspace. `typecheck/v1` installs the real `@orpc/contract` v1 package and `typecheck/v2` installs the v2 beta packages (`@orpc/contract`, `@orpc/openapi`, `@orpc/server`), so the generated code is checked against the actual builder APIs rather than against our own assumptions. The fixtures `edge-cases`, `imported-contract` and `no-schema-lib` are skipped because they are deliberately unconvertible or import local modules.
 
+## Publishing
+
+Releases are staged by CI and published by hand, so the npm account's two-factor authentication stays in force.
+
+1. Bump `version` in `package.json` and the changelog, commit, and create a GitHub release whose tag is `v<version>`.
+2. The Release workflow verifies and builds the tag, then attaches `ts-rest-to-orpc-<version>.tgz` to the release (it is also a workflow artifact).
+3. Download that tarball and publish it:
+
+```sh
+npm publish ts-rest-to-orpc-<version>.tgz --access public --otp=<code>
+```
+
 ## Licence
 
 [MIT](./LICENSE)
