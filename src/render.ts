@@ -301,8 +301,9 @@ export function renderRoute(
   // (typical for contracts written with `c.type<T>()`), or when a synthesised
   // params schema would otherwise force a zod dependency on a file without one.
   const presentParts = Object.values(parts).filter((v): v is SchemaValue => v !== undefined)
-  const typeOnly = !ctx.isJs && presentParts.length > 0 && presentParts.every((v) => v.kind === 'plain' || (v.typeText !== undefined && ctx.schema.kind === 'unknown'))
-    || (presentParts.length > 0 && presentParts.every(isTypeOnly) && presentParts.some((v) => v.kind === 'plain'))
+  const allPlainOrSynthesised = presentParts.every((v) => v.kind === 'plain' || (v.typeText !== undefined && ctx.schema.kind === 'unknown'))
+  const allTypeOnlyWithPlain = presentParts.every(isTypeOnly) && presentParts.some((v) => v.kind === 'plain')
+  const typeOnly = !ctx.isJs && presentParts.length > 0 && (allPlainOrSynthesised || allTypeOnlyWithPlain)
   const tc = (typeArgs: string): string => typeCall(ctx, typeArgs, route)
 
   let input: string | undefined

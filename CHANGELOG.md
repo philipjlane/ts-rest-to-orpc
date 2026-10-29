@@ -14,12 +14,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Support for `c.type<T>()`, `c.noBody()` and `c.otherResponse`. Routes whose request parts are all plain types get a `type<...>()` input (merges become `type<A & B>()`), and several plain-type success statuses become a single `type<...>()` output. Only mixed routes wrap a plain type in `z.custom<T>()`, reported as `plain-type-wrapped`. Inside generic functions and classes, `type<T>((v) => v)` is emitted.
 - Treatment of `204: null`, `204: c.type<null>()` and `204: c.type<undefined>()` as no body.
 - Conversion of routes declared in `const` objects at any depth, including inside factory functions.
+- Support for `initContract().router(...)` chained without a variable, `initContract as init` aliases, `const c = initContract()` inside functions, routes and routers wrapped in `as const` or `satisfies` inside a router, `path: '/x/:id' as const`, router calls used as arrow-function bodies, and imported contract instances (`import { c } from './c'`) used with identifier-only routers.
+- Router `pathPrefix` with `:param` segments (converted to `{param}` and threaded into child inputs, with a `prefix-params` warning when a route has its own `pathParams`); `pathPrefix: undefined` is ignored; compound non-literal prefixes are parenthesised before the cast.
+- Import handling that reuses the `@ts-rest/core` import declaration for `@orpc/contract` so leading licence comments survive, inserts other new imports after the leading import block, and keeps exported contract instances (and their `initContract` import).
+- Preservation of CRLF line endings and tab, 2-space or 4-space indentation, detected from each file.
+- `type()` without generics for JavaScript inputs.
 - Router options: `pathPrefix` (non-literal prefixes are cast to `/${string}` and reported as `prefix-cast`), `baseHeaders`, `commonResponses` and `metadata`.
 - Import rewriting, removal of `satisfies AppRoute` / `satisfies AppRouter` / `as const`, and renaming of the `AppRouter` and `AppRoute` types (imported with `import type` from `@orpc/contract`, only when still referenced).
 - `--target v1|v2` to generate either `oc.route({...})` (oRPC v1) or `.meta(openapi({...}))` from `@orpc/openapi` (oRPC v2 beta).
 - `--input-structure auto|detailed|compact`, with `auto` as the default.
 - `--schema auto|zod|valibot` for generated wrappers, with detection from the file's imports.
-- Diagnostics at `info`, `warn` and `error` levels, with `// TODO(ts-rest-to-orpc): ...` comments for route-level problems (disable with `--no-comments`).
+- Diagnostics at `info`, `warn` and `error` levels (including `prefix-params`, `path-optional-param`, `headers-not-merged`, `contract-not-converted`, `contract-instance-exported`, `router-not-converted` and `input-merged`, which is a warning when real schemas are merged), with `// TODO(ts-rest-to-orpc): ...` comments for route-level problems (disable with `--no-comments`).
 - `--dry-run`, `--print`, `--quiet` and `--verbose` flags. By default only warnings and errors are listed per file; `--verbose` adds info notes.
 - `schema-lib-unknown` is reported once per file, and a zod import is added when the codemod had to generate a wrapper without a detected schema library.
 - Validation against a 60-file production contract set (type-only and zod-based), with the output compiled against oRPC 1.16 and 2.0.0-beta.47.

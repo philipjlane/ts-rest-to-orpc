@@ -20,7 +20,7 @@ When you are happy with the report, run it again without `--dry-run` to rewrite 
 npx ts-rest-to-orpc "src/**/*.contract.ts"
 ```
 
-Run your formatter (Prettier, Biome, dprint or similar) afterwards. The codemod preserves the quote style and semicolon habits of each file but does not format its output, so indentation and line breaks in generated code will not match your house style.
+Run your formatter (Prettier, Biome, dprint or similar) afterwards. The codemod matches each file's quote style, semicolon habit, line endings (CRLF is preserved) and indentation (tabs, 2 or 4 spaces, detected from the file), but it does not format its output, so line breaks and wrapping in generated code will not match your house style.
 
 Notes on file selection:
 
@@ -156,15 +156,15 @@ export const contract = oc
 | --- | --- |
 | `c.router(routes)` | The routes object is emitted as a plain object of `oc` procedures. Nested `c.router()` calls and plain nested objects become nested objects. Routes declared in `const` objects are converted at any depth, including inside factory functions. |
 | `c.router(routes, options)` | Options are applied as builder calls on `oc`, followed by `.router({...})`. See the router options rows below. |
-| `method`, `path` | `method` is upper-cased and placed in `.route({...})` (v1) or `.meta(openapi({...}))` (v2). `path` has `:id` rewritten to `{id}`. Template-literal paths are rewritten textually (`path-template`); non-literal paths are left as they are (`path-not-literal`). |
-| `pathParams` | Becomes the `params` part of the input. When absent but the path has `:param` segments, a schema is synthesised with each param as a string, for example `z.object({ id: z.string() })`. |
+| `method`, `path` | `method` is upper-cased and placed in `.route({...})` (v1) or `.meta(openapi({...}))` (v2). `path` has `:id` rewritten to `{id}`. An optional `:id?` becomes a required `{id}` (`path-optional-param`). Template-literal paths are rewritten textually (`path-template`); non-literal paths are left as they are (`path-not-literal`). `path: '/x/:id' as const` is handled. |
+| `pathParams` | Becomes the `params` part of the input. When absent but the path (or a router `pathPrefix`) has `:param` segments, a schema is synthesised with each param as a string, for example `z.object({ id: z.string() })`. |
 | `query` | The `query` part of the input. |
 | `body` | The `body` part of the input. `c.noBody()` as a request body is dropped. |
-| `headers` | The `headers` part of the input. The legacy form, a plain object of schemas (`headers: { 'x-key': z.string() }`), is wrapped in the schema library's `object()`. Any headers force a detailed input (see [Input structure](#input-structure)). |
+| `headers` | The `headers` part of the input. The legacy form, a plain object of schemas (`headers: { 'x-key': z.string() }`), is wrapped in the schema library's `object()`. Any headers force a detailed input (see [Input structure](#input-structure)). If a route's `headers` is a `c.type<T>()` and the router has `baseHeaders`, only `baseHeaders` are kept (`headers-not-merged`). |
 | `responses` 2xx/3xx, one status | `.output(schema)`. A status other than 200 adds `successStatus: <status>` to the route config. A `c.noBody()` success becomes `.output(type<void>())`. For status 204, `null`, `c.type<null>()` and `c.type<undefined>()` are also treated as no body. Any other `null` response becomes `type<null>()`. |
 | `responses` 2xx/3xx, several statuses | `outputStructure: 'detailed'` and an `.output()` union of `{ status: literal, body }` objects (`multiple-success` note). |
 | `responses` 4xx/5xx | `.errors({ CODE: { status, data } })` in v1. In v2 the `status` field is omitted. The code comes from the table below; `c.noBody()` entries have no `data`. |
-| `c.type<T>()` | `type<T>()` from `@orpc/contract`. When every request part of a route is a plain type (`c.type<T>()`, a synthesised path-param shape or no body), the whole input is emitted as a type, for example `.input(type<{ params: { id: string }; body: Partial<T> }>())`; compact merges become `type<A & B>()`. Several success statuses that are all plain types become one output type, for example `.output(type<{ status: 200; body: A } \| { status: 202 }>())`. Only mixed routes (a runtime schema next to a plain type) wrap the plain type in `z.custom<T>()` (valibot: `v.custom<T>(() => true)`) so it can sit inside an object schema; that is typed but not validated at runtime, and is reported as `plain-type-wrapped`. Inside a generic function or class, `type<T>()` is emitted as `type<T>((v) => v)`, because TypeScript cannot prove that `T` equals itself for the zero-argument overload. `c.body<T>()` and `c.response<T>()` are treated the same way. |
+| `c.type<T>()` | `type<T>()` from `@orpc/contract`. When every request part of a route is a plain type (`c.type<T>()`, a synthesised path-param shape or no body), the whole input is emitted as a type, for example `.input(type<{ params: { id: string }; body: Partial<T> }>())`; compact merges become `type<A & B>()`. Several success statuses that are all plain types become one output type, for example `.output(type<{ status: 200; body: A } \| { status: 202 }>())`. Only mixed routes (a runtime schema next to a plain type) wrap the plain type in `z.custom<T>()` (valibot: `v.custom<T>(() => true)`) so it can sit inside an object schema; that is typed but not validated at runtime, and is reported as `plain-type-wrapped`. Inside a generic function or class, `type<T>()` is emitted as `type<T>((v) => v)`, because TypeScript cannot prove that `T` equals itself for the zero-argument overload. `c.body<T>()` and `c.response<T>()` are treated the same way. In JavaScript files (`.js`, `.mjs`, `.cjs`, `.jsx`) there are no generics, so the output is `type()`, which is typed as `unknown`. |
 | `c.noBody()` | Dropped from requests; `type<void>()` as the only success output; no `data` on an error. |
 | `c.otherResponse({ contentType, body })` | The `body` is converted as usual. The content type is dropped with an `other-response` warning. |
 | `summary`, `description`, `deprecated` | Copied into the route config. |
@@ -172,14 +172,25 @@ export const contract = oc
 | `contentType` | `multipart/form-data` is dropped with an info note (oRPC sends multipart when the body schema contains a `File` or `Blob`). `application/json` is dropped silently. Anything else is dropped with a `content-type` warning. |
 | `strictStatusCodes` | Dropped (info). Applies to routes and router options. |
 | `validateResponseOnClient` | Dropped (info). Applies to routes and router options. |
-| router option `pathPrefix` | v1: `oc.prefix('/api').router(...)`. v2: `oc.meta(openapi({ prefix: '/api' })).router(...)`. A non-literal prefix is cast, as in ``.prefix(pathPrefix as `/${string}`)`` (v2: inside `openapi({ prefix: ... })`), and reported as info `prefix-cast`. |
+| router option `pathPrefix` | v1: `oc.prefix('/api').router(...)`. v2: `oc.meta(openapi({ prefix: '/api' })).router(...)`. A prefix with `:param` segments is converted to `{param}` and the params are added to the synthesised input of child routes; a route that supplies its own `pathParams` must add them itself (`prefix-params`). A non-literal prefix is cast, as in ``.prefix(pathPrefix as `/${string}`)`` (v2: inside `openapi({ prefix: ... })`), parenthesised first if it is a compound expression, and reported as info `prefix-cast`. `pathPrefix: undefined` is ignored. |
 | router option `baseHeaders` | Merged into the headers of every inline route beneath the router (`base-headers-inlined`). |
 | router option `commonResponses` | 4xx/5xx entries become a router-level `.errors({...})`. 2xx/3xx entries are added to every inline route beneath the router; a route's own response for the same status wins. |
 | router option `metadata` | v1: merged into the `.meta()` of every inline route (`metadata-inlined`), with the route's own metadata taking precedence. v2: dropped with a warning. |
 | `c.query({...})`, `c.mutation({...})` | Unwrapped to the same `oc` procedure as a plain route object. |
 | `satisfies AppRoute`, `satisfies AppRouter`, `as const` | Stripped from converted routes and routers (`wrapper-stripped`), since oRPC builders carry their own types. |
 | `AppRouter`, `AppRoute` types | Renamed to `AnyContractRouter` and `AnyContractProcedure`, imported with `import type { ... } from '@orpc/contract'`, and only when still referenced. |
-| Imports | `initContract` and `initTsRest` are removed from `@ts-rest/core`; the import is deleted if nothing else is left. `oc`, `type` and the renamed types are added from `@orpc/contract`; `openapi` from `@orpc/openapi` (v2 only); `import { z } from 'zod'` if a generated wrapper needs it and no schema library import was found (files that only use `c.type` need no zod import at all). `const c = initContract()` is deleted once nothing references it. |
+| Imports | `initContract` and `initTsRest` (including aliases such as `initContract as init`) are removed from `@ts-rest/core`, and the import is deleted if nothing else is left. The first new `@orpc/contract` import reuses that declaration in place, so a leading licence or header comment survives; other new imports go after the leading import block. Added imports: `oc` and `type` from `@orpc/contract`, `openapi` from `@orpc/openapi` (v2 only), and `import { z } from 'zod'` if a generated wrapper needs it and no schema library import was found (files that only use `c.type` need no zod import at all). `const c = initContract()` is deleted once nothing references it. If it is still referenced, or exported, it is kept (with `initContract` still imported) and flagged. An imported instance (`import { c } from './c'`) is removed once unused. |
+
+### Supported shapes
+
+Besides `const c = initContract()` at the top of a file, the codemod recognises:
+
+- `initContract().router(...)` chained without a variable, and `const c = initContract()` inside functions.
+- Aliased imports such as `import { initContract as init }`.
+- Routes or routers wrapped in `as const` or `satisfies` inside a router.
+- A router call used as an arrow-function body (parenthesised when it becomes a plain object).
+- An imported contract instance (`import { c } from './c'`) used with identifier-only routers, for example `c.router({ users: usersContract }, { pathPrefix: '/api' })`. The now-unused `c` import is removed.
+- Routes declared in `const` objects at any depth, including inside factory functions.
 
 ### Error status to code
 
@@ -212,7 +223,7 @@ Used for `.errors()` in both targets. Statuses without a built-in oRPC code beco
 oRPC procedures take one input. ts-rest keeps path params, query, headers and body separate, so the codemod has to decide how to pack them. `--input-structure` controls this.
 
 - `detailed`: always emits `{ params, query, headers, body }` containing only the parts the route has, and sets `inputStructure: 'detailed'` on the route. Nothing is merged, so nothing can collide or be lost. If every part is a plain type, the wrapper is a type literal inside `type<...>()` instead of a schema object.
-- `compact`: oRPC's default shape. A single part becomes the input directly. Path params together with query (on `GET`/`HEAD`) or body (on other methods) are merged into one object schema (`.extend(x.shape)` for zod, spread `.entries` for valibot) and reported as `input-merged`. The merge assumes both parts are object schemas and does not check; when both are plain types the merge is emitted as `type<A & B>()`. Headers, query on a non-`GET`/`HEAD` route, and body on a `GET`/`HEAD` route cannot be represented compactly, so the route falls back to detailed with an `input-forced-detailed` warning.
+- `compact`: oRPC's default shape. A single part becomes the input directly. Path params together with query (on `GET`/`HEAD`) or body (on other methods) are merged into one object schema (`.extend(x.shape)` for zod, spread `.entries` for valibot) and reported as `input-merged`. The merge assumes both parts are plain object schemas and does not check, so merging real schemas is reported as an `input-merged` warning with a TODO; when both are plain types the merge is emitted as `type<A & B>()` and reported as info. Headers, query on a non-`GET`/`HEAD` route, and body on a `GET`/`HEAD` route cannot be represented compactly, so the route falls back to detailed with an `input-forced-detailed` warning.
 - `auto` (default): chooses per route. A route is compact when it has at most one request part and no headers (and that part is the natural one for the method: params, query on `GET`/`HEAD`, or body otherwise). Every other route is detailed.
 
 `auto` is the default because it produces the flattest input wherever that is lossless, and falls back to the explicit shape wherever compact would have to merge schemas or could not express a part at all. It never emits the `input-forced-detailed` warning, and it never merges schemas behind your back.
@@ -244,23 +255,28 @@ The CLI prints warnings and errors to stderr, grouped by file, plus a summary co
 | --- | --- | --- |
 | `base-headers-inlined` | info | Router `baseHeaders` were merged into each inline route's headers. |
 | `content-type` | info / warn | A route `contentType` was dropped. Info for `multipart/form-data`, warning for anything other than `application/json`. |
-| `input-merged` | info | Path params and query/body were merged into one compact input. |
+| `input-merged` | info / warn | Path params and query/body were merged into one compact input. Info for plain-type merges (`type<A & B>()`); warning when real schemas are merged with `.extend(...shape)` or `.entries`, because both sides must be plain object schemas. |
 | `metadata-inlined` | info | Router `metadata` was merged into each inline route's `.meta()` (v1). |
 | `multiple-success` | info | Several success statuses became a detailed output union. |
 | `prefix-cast` | info | A non-literal `pathPrefix` was cast to oRPC's `/${string}` path type. |
 | `strict-status-codes` | info | `strictStatusCodes` was dropped. |
 | `validate-response-on-client` | info | `validateResponseOnClient` was dropped. |
 | `wrapper-stripped` | info | `as const` / `satisfies` was removed from a converted declaration. |
+| `contract-instance-exported` | warn | `export const c = initContract()` was kept so importers keep working. |
 | `contract-instance-still-used` | warn | `initContract()` was kept because the contract variable is still referenced. |
+| `contract-not-converted` | warn | An `initContract()` call is used in an unsupported way, such as being destructured, so nothing depending on it was converted. |
 | `error-status-custom` | warn | The status has no built-in oRPC code; `HTTP_<status>` was generated (v2). |
+| `headers-not-merged` | warn | A route's `headers: c.type<T>()` could not be merged with router `baseHeaders`; only `baseHeaders` were kept. |
 | `helper-not-converted` | warn | A `c.<helper>()` call outside a route, such as `c.responses()`, was left unchanged. |
 | `input-forced-detailed` | warn | `--input-structure compact` was overridden for a route that cannot be compact. |
 | `metadata-v2` | warn | `metadata` was dropped because v2 `.meta()` takes plugin-defined metadata only. |
 | `options-not-applied` | warn | Router options could not be applied to a route that is not an inline object. |
 | `other-response` | warn | `c.otherResponse` content type was dropped. |
+| `path-optional-param` | warn | An optional `:id?` path param became required, because oRPC has no optional path params. |
 | `path-not-literal` | warn | The path is not a string literal, so `:param` segments were not rewritten. |
 | `path-template` | warn | The path is a template literal; params were rewritten textually. |
 | `plain-type-wrapped` | warn | A plain `c.type<T>()` was wrapped in `z.custom<T>()` next to a runtime schema; it is not validated at runtime. |
+| `prefix-params` | warn | A router `pathPrefix` has `:param` segments and the route supplies its own `pathParams`; add the prefix params to that schema. |
 | `route-not-converted` | warn | `c.query()` / `c.mutation()` outside a router or variable declaration was left unchanged. |
 | `schema-lib-unknown` | warn | No schema library import was found, so generated wrappers assume zod and a zod import was added. Reported once per file, on line 1. |
 | `ts-rest-import-remaining` | warn | Names are still imported from `@ts-rest/core` and need manual migration. |
@@ -271,6 +287,7 @@ The CLI prints warnings and errors to stderr, grouped by file, plus a summary co
 | `responses-not-literal` | error | `responses` is not an inline object, so it was not split into `.output()` and `.errors()`. |
 | `responses-spread` | error | `responses` contains a spread or shorthand entry that was skipped. |
 | `route-spread` | error | The route contains a spread or method, so it was left unchanged. |
+| `router-not-converted` | error | A `.router()` call was left as it was: its routes are not an object literal or identifier in a supported position. |
 | `router-options-not-literal` | error | Router options are not an inline object and were dropped. |
 
 ## What is not converted
@@ -282,6 +299,10 @@ This tool only rewrites contract definitions. Everything built on top of them is
 - Any `@ts-rest/*` package other than `@ts-rest/core` is not touched. Names left in a `@ts-rest/core` import are flagged with `ts-rest-import-remaining`.
 - Type helpers such as `ClientInferResponses`, `ClientInferRequest`, `ServerInferResponses` and `InferResponseBody`. Only `AppRouter` and `AppRoute` are renamed.
 - Contracts whose paths, `responses` or router options are not inline literals, and routes containing spreads. These are left in place or partially converted and flagged.
+- Enum or computed response keys such as `[HttpStatus.OK]`, and a variable passed as router options.
+- A destructured `initContract()` (`contract-not-converted`), and `.router()` calls whose routes are not an object literal or identifier in a supported position (`router-not-converted`).
+- Inline comments inside route objects, which are lost.
+- Compact merging of real schemas assumes plain object schemas (see [Input structure](#input-structure)).
 - Contract objects shared across files are converted where they are defined. A file that only uses an imported `c` is handled when it contains an inline `c.router({...})` call with recognisable routes.
 
 See the [oRPC documentation](https://orpc.dev) for implementing contracts, building clients, error handling and OpenAPI generation.
