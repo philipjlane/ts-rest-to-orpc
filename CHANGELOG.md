@@ -30,4 +30,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Validation against a 60-file production contract set (type-only and zod-based), with the output compiled against oRPC 1.16 and 2.0.0-beta.47.
 - Fixture snapshot tests, and `pnpm typecheck:fixtures`, which compiles converted fixtures against the real `@orpc/contract` v1 and v2 packages.
 
-[0.1.0]: https://github.com/philiplane/ts-rest-to-orpc/releases/tag/v0.1.0
+[0.1.0]: https://github.com/philipjlane/ts-rest-to-orpc/releases/tag/v0.1.0
