@@ -32,7 +32,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown --config-loader tsx",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
