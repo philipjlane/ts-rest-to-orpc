@@ -1,0 +1,12 @@
+{
+  "name": "typecheck-v1",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc -p tsconfig.json" },
+  "devDependencies": {
+    "@orpc/contract": "^1.16.1",
+    "typescript": "^5.9.0",
+    "zod": "^4.1.0",
+    "valibot": "^1.1.0"
+  }
+}

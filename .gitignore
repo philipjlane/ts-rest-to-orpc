@@ -1,0 +1,7 @@
+node_modules
+dist
+typecheck/*/generated
+*.log
+typecheck/*/real
+typecheck/*/tsconfig.real.json
+test/candidates
