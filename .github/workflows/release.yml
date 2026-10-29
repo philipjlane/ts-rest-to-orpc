@@ -1,8 +1,10 @@
 name: Release
 
-# Stages a release: verifies, builds and packs the npm tarball, then attaches
-# it to the GitHub release for the tag. Publishing to npm is done by hand from
-# that tarball (see README, "Publishing").
+# Stages a release on npm (https://docs.npmjs.com/staged-publishing): the
+# version is uploaded with `npm stage publish`, which needs no 2FA, and a
+# maintainer approves it on npmjs.com (Staged Packages tab) or with
+# `npm stage approve <stage-id>`. The tarball is also attached to the GitHub
+# release for inspection.
 
 on:
   push:
@@ -19,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -30,8 +33,11 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Use an npm CLI with staged publishing (11.15 or later)
+        run: npm install -g npm@latest && npm --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck && pnpm test && pnpm typecheck:fixtures
       - run: pnpm build
@@ -52,3 +58,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" ts-rest-to-orpc-*.tgz --clobber
+      - name: Stage the version on npm
+        run: npm stage publish --access public --provenance --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

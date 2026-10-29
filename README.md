@@ -364,14 +364,18 @@ Fixtures live in `test/fixtures` and their expected outputs, for each target and
 
 ## Publishing
 
-Releases are staged by CI and published by hand, so the npm account's two-factor authentication stays in force.
+Releases use [npm staged publishing](https://docs.npmjs.com/staged-publishing), so CI never needs a token that bypasses two-factor authentication.
 
 1. Bump `version` in `package.json` and the changelog, commit, and create a GitHub release whose tag is `v<version>`.
-2. The Release workflow verifies and builds the tag, then attaches `ts-rest-to-orpc-<version>.tgz` to the release (it is also a workflow artifact).
-3. Download that tarball and publish it:
+2. The Release workflow verifies and builds the tag, attaches `ts-rest-to-orpc-<version>.tgz` to the GitHub release, and runs `npm stage publish`. Staging needs the `NPM_TOKEN` repository secret (a granular access token with publish rights; it does not need to bypass 2FA).
+3. Approve the staged version with 2FA, either on npmjs.com under the package's **Staged Packages** tab, or from a machine with npm 11.15 or later:
 
 ```sh
-npm publish ts-rest-to-orpc-<version>.tgz --access public --otp=<code>
+npm stage list ts-rest-to-orpc
+```
+
+```sh
+npm stage approve <stage-id>
 ```
 
 ## Licence
